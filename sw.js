@@ -1,6 +1,6 @@
 /* Service worker: deixa o site funcionando offline depois da 1ª visita.
    Estratégia: responde com o que está em cache e atualiza em segundo plano. */
-const CACHE = "ficha-isa-v1";
+const CACHE = "ficha-isa-v2";
 const CORE = ["./", "./index.html", "./js/dados.js", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", (e) => {
