@@ -1,7 +1,7 @@
 {
   "name": "Ficha da Isa",
   "short_name": "Ficha",
-  "description": "Rotina de treinos, checklist, evolução e receitas do dia.",
+  "description": "Rotina de treinos, checklist, evolução, receitas e diário alimentar.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

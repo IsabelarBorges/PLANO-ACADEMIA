@@ -353,6 +353,17 @@ td.n, th.n { text-align: right; font-family: var(--f-data); font-variant-numeric
 .all-rec button b { font-size: 14.5px; }
 .all-rec button span { font-size: 12px; color: var(--muted); }
 .shop { columns: 2 220px; font-size: 14px; margin: 0; padding-left: 18px; color: var(--ink-2); }
+.online-rec { display: grid; gap: 12px; }
+.online-rec .search input { flex: 1 1 240px; }
+.food-results { display: grid; gap: 8px; }
+.food-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.food-result b, .food-result small { display: block; overflow-wrap: anywhere; }
+.food-result small { color: var(--muted); font-size: 12px; }
+.food-result .btn { white-space: nowrap; }
+.food-log { display: grid; gap: 8px; }
+.food-log-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 10px; background: var(--surface-2); }
+.food-log-row small { color: var(--muted); }
+@media (max-width: 520px) { .food-result, .food-log-row { grid-template-columns: 1fr; } }
 
 /* modal */
 dialog { border: 0; border-radius: 18px; padding: 0; max-width: min(640px, calc(100vw - 32px)); width: 100%; background: var(--surface); color: var(--ink); box-shadow: 0 30px 80px -20px rgba(0,0,0,.5); }
@@ -548,6 +559,18 @@ dialog .card { border: 0; }
         <div id="resetConfirm" hidden style="margin-top:12px" class="banner"><div><b>Apagar todos os registros?</b> Isso não pode ser desfeito. <div class="row" style="margin-top:8px"><button class="btn small" id="resetYes" style="color:var(--hot)">Sim, apagar</button><button class="btn small" id="resetNo">Cancelar</button></div></div></div>
       </div>
     </div>
+
+    <div class="card" id="foodDiary">
+      <div class="card-head"><h2>Diário alimentar</h2><span class="chip good num" id="foodTotal">0 kcal · 0 g prot.</span></div>
+      <p class="muted" style="font-size:13px;margin:0 0 12px">Pesquise um alimento, informe a quantidade consumida e acompanhe o total do dia. Os valores vêm de uma base pública e são aproximados.</p>
+      <div class="search">
+        <input id="foodQ" type="search" placeholder="Buscar alimento: arroz, banana, frango…" aria-label="Buscar alimento">
+        <button class="btn primary" id="foodSearch" type="button">Buscar alimento</button>
+      </div>
+      <div class="food-results" id="foodResults" aria-live="polite"></div>
+      <div class="food-log" id="foodLog"></div>
+      <div class="banner" id="foodBalance" style="margin-top:4px"></div>
+    </div>
   </section>
 
   <!-- ================= RECEITAS ================= -->
@@ -565,6 +588,12 @@ dialog .card { border: 0; }
     </div>
     <div id="recBanner"></div>
     <div class="rec-grid" id="recDay"></div>
+    <div class="card online-rec">
+      <div class="card-head"><h2>Receitas da internet</h2><span class="chip acc" id="onlineRecStatus">Prontas para buscar</span></div>
+      <p class="muted" style="font-size:13px;margin:0">Encontre outras ideias online. Quando estiver sem internet, as receitas locais continuam funcionando normalmente.</p>
+      <div class="search"><input id="onlineRecQ" type="search" placeholder="Buscar receita: chicken, pasta, curry…" aria-label="Buscar receita online"><button class="btn primary" id="onlineRecSearch" type="button">Buscar receitas</button></div>
+      <div class="rec-grid" id="onlineRecGrid"></div>
+    </div>
     <div class="card">
       <div class="card-head"><h2>Lista de compras de hoje</h2><button class="btn small" id="copyShop">Copiar lista</button></div>
       <ul class="shop" id="shop"></ul>
@@ -623,7 +652,7 @@ const KEY = "fichaIsa.v1";
 const blank = () => ({
   perfil: { ...window.PERFIL_INICIAL, metaCintura: null },
   pesos: [{ d: today(), kg: window.PERFIL_INICIAL.pesoKg }],
-  check: {}, agua: {}, log: {}, fim: {}, recOff: {}, fav: [],
+  check: {}, agua: {}, log: {}, fim: {}, recOff: {}, fav: [], alimentos: {},
   inicio: today(),
 });
 let S;
@@ -686,6 +715,52 @@ async function copyText(txt) {
   try { await navigator.clipboard.writeText(txt); toast("Copiado!"); }
   catch { const ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); toast("Copiado!"); } catch { toast("Não deu para copiar — selecione manualmente."); } ta.remove(); }
 }
+const FOOD_API = "https://world.openfoodfacts.org/cgi/search.pl";
+const RECIPE_API = "https://www.themealdb.com/api/json/v1/1/search.php";
+const foodDate = () => S.alimentos[today()] || [];
+const foodNutrient = (p, key) => Number(p.nutriments?.[key] ?? 0) || 0;
+function foodTotals() {
+  return foodDate().reduce((t, x) => ({ kcal: t.kcal + x.kcal, prot: t.prot + x.prot }), { kcal: 0, prot: 0 });
+}
+function renderFoodDiary() {
+  const total = foodTotals();
+  $("#foodTotal").textContent = `${fmt0(total.kcal)} kcal · ${fmt0(total.prot)} g prot.`;
+  const target = S.perfil.idade ? Math.round((10 * (pesosOrd().at(-1)?.kg || S.perfil.pesoKg) + 6.25 * S.perfil.alturaCm - 5 * S.perfil.idade - 161) * 1.725) : null;
+  $("#foodBalance").innerHTML = target
+    ? `<div><b>${total.kcal <= target ? "Dentro da estimativa diária." : "Acima da estimativa diária."}</b> Consumido: ${fmt0(total.kcal)} kcal · Estimativa de gasto: ${fmt0(target)} kcal. Isso é uma referência, não uma avaliação médica.</div>`
+    : `<div><b>Informe sua idade no perfil</b> para comparar o consumo com uma estimativa de gasto diário.</div>`;
+  $("#foodLog").innerHTML = foodDate().length ? foodDate().map((x, i) => `<div class="food-log-row"><span><b>${esc(x.name)}</b><small>${x.grams} g · ${fmt0(x.kcal)} kcal · ${fmt1(x.prot)} g proteína</small></span><button class="btn small ghost" type="button" data-food-remove="${i}" aria-label="Remover ${esc(x.name)}">Remover</button></div>`).join("") : `<p class="muted" style="font-size:13px;margin:0">Nenhum alimento registrado hoje.</p>`;
+}
+function foodResultCard(p) {
+  const name = p.product_name || p.product_name_pt || "Alimento sem nome";
+  const kcal = foodNutrient(p, "energy-kcal_100g");
+  const prot = foodNutrient(p, "proteins_100g");
+  return `<div class="food-result"><span><b>${esc(name)}</b><small>${kcal ? `${fmt0(kcal)} kcal` : "kcal não informadas"} · ${prot ? `${fmt1(prot)} g proteína` : "proteína não informada"} por 100 g</small></span><button class="btn small" type="button" data-food-add data-food-name="${esc(name)}" data-food-kcal="${kcal}" data-food-prot="${prot}">Adicionar</button></div>`;
+}
+async function searchFoods() {
+  const q = $("#foodQ").value.trim(); if (!q) return;
+  $("#foodResults").innerHTML = `<p class="muted">Buscando alimentos…</p>`;
+  try {
+    const url = `${FOOD_API}?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=8&fields=product_name,product_name_pt,nutriments`;
+    const data = await fetch(url).then((r) => { if (!r.ok) throw new Error(); return r.json(); });
+    const products = (data.products || []).filter((p) => p.product_name || p.product_name_pt);
+    $("#foodResults").innerHTML = products.length ? products.map(foodResultCard).join("") : `<p class="muted">Nenhum alimento encontrado.</p>`;
+  } catch { $("#foodResults").innerHTML = `<p class="muted">Não foi possível consultar a internet agora. Tente novamente ou registre a refeição manualmente em uma próxima versão.</p>`; }
+}
+function addFood(raw) {
+  const grams = Number(prompt(`Quantidade de ${raw.name} em gramas:`, "100"));
+  if (!Number.isFinite(grams) || grams <= 0) return;
+  S.alimentos[today()] = foodDate().concat({ name: raw.name, grams, kcal: raw.kcal * grams / 100, prot: raw.prot * grams / 100 });
+  save(); renderFoodDiary(); toast("Alimento adicionado");
+}
+$("#foodSearch").addEventListener("click", searchFoods);
+$("#foodQ").addEventListener("keydown", (e) => { if (e.key === "Enter") searchFoods(); });
+document.addEventListener("click", (e) => {
+  const add = e.target.closest("[data-food-add]");
+  if (add) addFood({ name: add.dataset.foodName, kcal: Number(add.dataset.foodKcal) || 0, prot: Number(add.dataset.foodProt) || 0 });
+  const remove = e.target.closest("[data-food-remove]");
+  if (remove) { S.alimentos[today()].splice(Number(remove.dataset.foodRemove), 1); save(); renderFoodDiary(); }
+});
 const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 
 /* ------------------------------------------------------------------
@@ -990,6 +1065,7 @@ function renderEvolucao() {
   }).filter(Boolean);
   $("#forca").innerHTML = `<thead><tr><th>Exercício</th><th class="n">Sessões</th><th class="n">Início</th><th class="n">Melhor</th><th class="n">Ganho</th></tr></thead><tbody>${rows.length ? rows.join("") : `<tr><td colspan="5" class="muted">Ainda sem séries registradas. Abra a aba Treinos, anote kg e repetições e marque as séries — a tabela aparece aqui.</td></tr>`}</tbody>`;
   $("#freq").innerHTML = `<thead><tr><th>Grupo</th><th>Frequência</th><th>Quando</th></tr></thead><tbody>${window.FREQUENCIA.map(([g, n, o]) => `<tr><td><b>${g}</b></td><td><span class="dots">${[0, 1, 2].map((i) => `<i class="${i < n ? "" : "off"}"></i>`).join("")}</span> <span class="num muted" style="font-size:12px">${n}×</span></td><td class="muted" style="font-size:13px">${o}</td></tr>`).join("")}</tbody>`;
+  renderFoodDiary();
 }
 function drawChart(P, meta) {
   const box = $("#chart"), W = 640, H = 240, m = { l: 44, r: 16, t: 16, b: 30 };
@@ -1070,6 +1146,25 @@ function recCard(r, withSwap) {
     <div class="cols"><div><h4>Ingredientes</h4><ul>${r.i.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div><div><h4>Preparo</h4><ol>${r.s.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></div></div>
     ${withSwap ? `<div class="rec-actions"><button class="btn small" data-swap="${r.m}">↻ Outra ideia</button></div>` : ""}</article>`;
 }
+function onlineRecCard(r) {
+  const ingredients = [];
+  for (let i = 1; i <= 20; i++) { const ingredient = r[`strIngredient${i}`], measure = r[`strMeasure${i}`]; if (ingredient?.trim()) ingredients.push(`${measure?.trim() || ""} ${ingredient.trim()}`.trim()); }
+  const steps = (r.strInstructions || "Confira o modo de preparo na fonte.").split(/\r?\n|\. (?=[A-Z])/).filter(Boolean);
+  return `<article class="card rec"><div class="rec-top"><div><div class="meal">${esc(r.strCategory || "Receita online")}</div><h3>${esc(r.strMeal)}</h3></div></div>
+    <div class="ex-meta"><span class="chip acc">Fonte: TheMealDB</span>${r.strArea ? `<span class="chip">${esc(r.strArea)}</span>` : ""}</div>
+    <div class="cols"><div><h4>Ingredientes</h4><ul>${ingredients.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div><div><h4>Preparo</h4><ol>${steps.map((x) => `<li>${esc(x.trim())}</li>`).join("")}</ol></div></div>
+    ${r.strSource ? `<div class="rec-actions"><a class="btn small" href="${esc(r.strSource)}" target="_blank" rel="noopener">Abrir fonte</a></div>` : ""}</article>`;
+}
+async function searchOnlineRecipes() {
+  const q = $("#onlineRecQ").value.trim(); if (!q) return;
+  $("#onlineRecStatus").textContent = "Buscando…"; $("#onlineRecGrid").innerHTML = "";
+  try {
+    const data = await fetch(`${RECIPE_API}?s=${encodeURIComponent(q)}`).then((r) => { if (!r.ok) throw new Error(); return r.json(); });
+    const meals = data.meals || [];
+    $("#onlineRecStatus").textContent = `${meals.length} encontrada${meals.length === 1 ? "" : "s"}`;
+    $("#onlineRecGrid").innerHTML = meals.length ? meals.slice(0, 6).map(onlineRecCard).join("") : `<p class="muted">Nenhuma receita encontrada.</p>`;
+  } catch { $("#onlineRecStatus").textContent = "Sem conexão"; $("#onlineRecGrid").innerHTML = `<p class="muted">Não foi possível buscar receitas agora. As receitas locais continuam disponíveis acima.</p>`; }
+}
 let recFilter = "all";
 function renderReceitas() {
   const d = today(), dt = parse(d), r = rotinaDe(d), picks = recipesOfDay(d);
@@ -1100,6 +1195,8 @@ document.addEventListener("click", (e) => {
 });
 $("#recQ").addEventListener("input", renderReceitas);
 $("#recFilter").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; recFilter = b.dataset.f; renderReceitas(); });
+$("#onlineRecSearch").addEventListener("click", searchOnlineRecipes);
+$("#onlineRecQ").addEventListener("keydown", (e) => { if (e.key === "Enter") searchOnlineRecipes(); });
 $("#copyShop").addEventListener("click", () => copyText("Lista de compras — " + fmtLong(new Date()) + "\n" + $$("#shop li").map((l) => "• " + l.textContent).join("\n")));
 
 /* ------------------------------------------------------------------
